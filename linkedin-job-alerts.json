@@ -1,0 +1,637 @@
+{
+  "name": "LinkedIn Job Alerts",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [144, 432],
+      "id": "1a9358ce-24cb-46e4-8be7-311dc93c6dbc",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Lista de búsquedas a correr contra LinkedIn.\n// Ajustá estos keywords a tu propio perfil / búsqueda.\nconst keywords = [\n  'backend developer',\n  'backend engineer',\n  'software engineer backend'\n];\n\nreturn keywords.map(k => ({ json: { keyword: k } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [288, -304],
+      "id": "8f58db9d-471f-4527-8fbd-cc99f42a6634",
+      "name": "job titles",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [480, -320],
+      "id": "447a4feb-37c5-44dd-9a99-e4f77a102b11",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "url": "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "keywords",
+              "value": "={{ $json.keyword }}"
+            },
+            {
+              "name": "location",
+              "value": "YOUR_LOCATION"
+            },
+            {
+              "name": "start",
+              "value": "0"
+            },
+            {
+              "name": "f_TPR",
+              "value": "r86400"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [624, 0],
+      "id": "a837e844-0048-4b51-aea2-0188b459bf07",
+      "name": "HTTP Request",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "titulo",
+              "cssSelector": ".base-search-card__title",
+              "returnArray": true
+            },
+            {
+              "key": "empresa",
+              "cssSelector": ".base-search-card__subtitle",
+              "returnArray": true
+            },
+            {
+              "key": "url",
+              "cssSelector": "a.base-card__full-link",
+              "returnValue": "attribute",
+              "attribute": "href",
+              "returnArray": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [832, 0],
+      "id": "59f0054a-663e-4978-99e0-56213615c1cc",
+      "name": "HTML"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [672, 256],
+      "id": "edc8eb3d-10cb-4bee-ab52-726806e54f6d",
+      "name": "Wait",
+      "webhookId": "a2c22a10-91b9-4aad-9109-a53834a7a69c"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mode: Run Once for All Items\nconst allOfertas = [];\n\nfor (const entry of $input.all()) {\n  const data = entry.json;\n  const titulos = data.titulo || [];\n  const empresas = data.empresa || [];\n  const urls = data.url || [];\n\n  titulos.forEach((titulo, i) => {\n    allOfertas.push({\n      titulo: titulo?.trim() || '',\n      empresa: empresas[i]?.trim() || '',\n      url: urls[i] || '',\n    });\n  });\n}\n\nreturn allOfertas.map(o => ({ json: o }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [784, -336],
+      "id": "a4ecb8bd-eae0-415f-984a-1d2b3c65b30c",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mode: Run Once for All Items\n// Deduplica ofertas que aparecieron en más de una búsqueda dentro del mismo batch\nconst seen = new Set();\nconst result = [];\n\nfor (const entry of $input.all()) {\n  const item = entry.json;\n  const url = item.url || '';\n  const id_externo = url.split('?')[0];\n\n  if (!id_externo || seen.has(id_externo)) continue;\n  seen.add(id_externo);\n\n  result.push({\n    titulo: item.titulo || '',\n    empresa: item.empresa || '',\n    url: url,\n    id_externo: id_externo,\n    fecha_deteccion: new Date().toISOString(),\n  });\n}\n\nreturn result.map((o, index) => ({ json: o, pairedItem: index }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1168, -160],
+      "id": "b7e63bd1-3470-423f-9465-bb9d6f7f0f10",
+      "name": "Code1"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_NOTION_DATABASE_ID",
+          "mode": "list",
+          "cachedResultName": "Trabajos"
+        },
+        "returnAll": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [1296, 80],
+      "id": "2cd51f3f-ca19-4ffe-90f5-9ac692c560a8",
+      "name": "Get many database pages",
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "notionApi": {
+          "id": "YOUR_NOTION_CREDENTIAL_ID",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mode: Run Once for All Items\nconst ids = $input.all().map(i => i.json.property_id_externo).filter(Boolean);\nreturn [{ json: { idsExistentes: ids } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1456, 208],
+      "id": "568efb4b-a150-42de-a911-5e9984857295",
+      "name": "ExistingIds"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [1584, -160],
+      "id": "1d81c92e-1906-406f-9ffb-41a8ead29080",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Mode: Run Once for Each Item\nconst item = $input.item.json;\nconst idsExistentes = $('ExistingIds').first().json.idsExistentes;\n\nconst existe = idsExistentes.includes(item.id_externo);\n\nreturn {\n  json: {\n    ...item,\n    existe\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1776, -160],
+      "id": "e0d69a51-c796-4254-b666-b955cfe4bfa5",
+      "name": "Code2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "393dbdcb-3524-4e2d-a432-dc05543bb7bd",
+              "leftValue": "={{ $json.existe }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1952, -160],
+      "id": "04cd6e3c-5503-49d8-8621-b00f30d03706",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2256, -400],
+      "id": "82c6ed79-3f4f-4cd3-b941-13e20daf3bc5",
+      "name": "Loop Detalle Ofertas"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item.json;\n\nreturn {\n  json: {\n    url: item.url,\n    _original: item\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2512, -320],
+      "id": "08c27c24-1a16-452f-9e72-d91cb8497b1d",
+      "name": "Guardar original"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2720, -320],
+      "id": "eb1bdd22-53e1-406a-8d05-e04835654986",
+      "name": "HTTP Request — detalle de la oferta",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "descripcion",
+              "cssSelector": ".show-more-less-html__markup"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [2944, -320],
+      "id": "1efdf645-b9ea-444d-8cea-159c988c8a8d",
+      "name": "HTML — extraer descripción"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item.json; // output de HTML, con \"descripcion\"\nconst guardado = $('Guardar original').first().json;\n\nreturn {\n  json: {\n    ...guardado._original,\n    descripcion: item.descripcion || ''\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3136, -320],
+      "id": "468d394d-6f85-42e2-b349-555dfe2c8167",
+      "name": "Code — combinar descripción con los datos originales"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2528, -128],
+      "id": "7d3f28b2-27ef-49d6-a6f8-3ca20a695dfd",
+      "name": "Wait1",
+      "webhookId": "a43190bd-75c5-450f-8ee4-130c2bcfb987"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b97defbe-4953-4b9b-a9a4-fa9fe4e1c607",
+              "name": "miperfil",
+              "value": "REEMPLAZAR con tu propio CV / perfil en texto plano. Este campo se inyecta en el prompt que se le manda al LLM para scorear cada oferta y generar un CV adaptado. Recomendado: nombre, ubicación, resumen profesional, experiencia laboral con logros medibles, stack técnico, educación e idiomas.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2640, 224],
+      "id": "10be4af4-fdbc-4829-aa20-a347dc367eb1",
+      "name": "Mi Perfil"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [3632, -352],
+      "id": "acfe5c72-a979-41eb-85e3-5068e61a2854",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [3984, -352],
+      "id": "67e0f45e-6089-4375-a07d-ca79ca5400a7",
+      "name": "Loop Gemini"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item.json;\nreturn { json: { ...item, _original: item } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4192, -256],
+      "id": "5828aa50-ade0-4689-ad9c-b72570e57a31",
+      "name": "Guardar antes de Gemini"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=YOUR_GEMINI_API_KEY",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  contents: [{\n    parts: [{\n      text: `Analizá esta oferta laboral y mi perfil. Respondé SOLO con un objeto JSON válido, sin texto adicional ni markdown, con esta forma exacta: {\"score\": number, \"justificacion\": string, \"cv_adaptado\": string}.\n\nOFERTA:\nTítulo: ${$json.titulo}\nEmpresa: ${$json.empresa}\nDescripción: ${$json.descripcion}\n\nMI PERFIL:\n${$('Mi Perfil').first().json.miperfil}\n\nINSTRUCCIONES IMPORTANTES:\n- El campo \"score\" debe ser un número entre 0 y 100 que represente qué tan bien matchea mi perfil con esta oferta.\n- El campo \"justificacion\" debe ser un párrafo breve (máximo 400 caracteres) explicando por qué es o no un buen match.\n- El campo \"cv_adaptado\" debe ser un resumen de mi perfil adaptado específicamente a esta oferta, priorizando la experiencia y skills más relevantes para el puesto. IMPORTANTE: el campo cv_adaptado debe tener un máximo estricto de 1800 caracteres. Sé conciso, priorizá lo más relevante y no repitas información innecesaria.`\n    }]\n  }]\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4576, -336],
+      "id": "e37bc8b2-2f39-467e-b225-9a3cb45f5afc",
+      "name": "GEMINI",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "amount": 10
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [4752, -240],
+      "id": "dc10fdf9-91e5-4267-9dc4-39785a8f5392",
+      "name": "Wait Retry",
+      "webhookId": "604ed982-639d-44c3-a5ff-da7ac95e5c0a"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Reintenta hasta 3 veces si Gemini devuelve error (ej. 503 por sobrecarga)\nconst item = $input.item.json;\nconst intentos = (item._intentos || 0) + 1;\n\nif (intentos >= 3) {\n  return null;\n}\n\nreturn {\n  json: {\n    ...item,\n    _intentos: intentos\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4944, -240],
+      "id": "18f95049-ec57-4e81-84d2-97c46c762ea9",
+      "name": "Code3"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const raw = $input.item.json.candidates[0].content.parts[0].text;\nconst clean = raw.replace(/```json|```/g, '').trim();\nconst parsed = JSON.parse(clean);\n\nconst original = $('Guardar antes de Gemini').first().json._original;\n\nreturn {\n  json: {\n    ...original,\n    ...parsed,\n    cv_adaptado: (parsed.cv_adaptado || '').slice(0, 1990)\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5184, -336],
+      "id": "a9e36719-0c0f-4a31-8246-1231b7409846",
+      "name": "parser",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [5248, -64],
+      "id": "0a5cef9f-d7b8-489b-ad49-d691aefb14a7",
+      "name": "Wait2",
+      "webhookId": "f058b10f-8dae-4f4d-b8e9-7b6de5fa3b37"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "df07b6df-3d7a-4fdc-b91e-b999ce1a5429",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": 85,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4608, -512],
+      "id": "63c0eb19-b642-430a-8715-fb84dd4c36b9",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_NOTION_DATABASE_ID",
+          "mode": "list",
+          "cachedResultName": "Trabajos"
+        },
+        "title": "={{ $json.titulo }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Empresa|rich_text",
+              "textContent": "={{ $json.empresa }}"
+            },
+            {
+              "key": "URL|url",
+              "urlValue": "={{ $json.url }}"
+            },
+            {
+              "key": "id_externo|rich_text",
+              "textContent": "={{ $json.id_externo }}"
+            },
+            {
+              "key": "Score|number",
+              "numberValue": "={{ $json.score }}"
+            },
+            {
+              "key": "Justificación|rich_text",
+              "textContent": "={{ $json.justificacion  }}"
+            },
+            {
+              "key": "CV Adaptado|rich_text",
+              "textContent": "={{ $json.cv_adaptado }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [4848, -528],
+      "id": "9bb4bc6a-b03d-451d-91bc-22cb322a8d06",
+      "name": "Create a database page",
+      "alwaysOutputData": true,
+      "credentials": {
+        "notionApi": {
+          "id": "YOUR_NOTION_CREDENTIAL_ID",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=🎯 Nueva oferta con match ({{ $json.property_score }}/100)\n\n{{ $json.property_titulo }} en {{ $json.property_empresa }}\n\n{{ $json.property_justificaci_n }}\n\n{{ $json.property_url }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [5088, -528],
+      "id": "7108a50c-1e32-4f07-b1f9-4cfe0a55e63f",
+      "name": "Send a text message",
+      "webhookId": "e15f45ae-c765-4cad-8f35-2d18140cd44a",
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          { "node": "job titles", "type": "main", "index": 0 },
+          { "node": "Mi Perfil", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "job titles": {
+      "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
+    },
+    "Loop Over Items": {
+      "main": [
+        [{ "node": "Code", "type": "main", "index": 0 }],
+        [{ "node": "HTTP Request", "type": "main", "index": 0 }]
+      ]
+    },
+    "HTTP Request": {
+      "main": [[{ "node": "HTML", "type": "main", "index": 0 }]]
+    },
+    "HTML": {
+      "main": [[{ "node": "Wait", "type": "main", "index": 0 }]]
+    },
+    "Wait": {
+      "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
+    },
+    "Code": {
+      "main": [[{ "node": "Code1", "type": "main", "index": 0 }]]
+    },
+    "Code1": {
+      "main": [
+        [
+          { "node": "Get many database pages", "type": "main", "index": 0 },
+          { "node": "Merge", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Get many database pages": {
+      "main": [[{ "node": "ExistingIds", "type": "main", "index": 0 }]]
+    },
+    "ExistingIds": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 1 }]]
+    },
+    "Merge": {
+      "main": [[{ "node": "Code2", "type": "main", "index": 0 }]]
+    },
+    "Code2": {
+      "main": [[{ "node": "If", "type": "main", "index": 0 }]]
+    },
+    "If": {
+      "main": [[{ "node": "Loop Detalle Ofertas", "type": "main", "index": 0 }]]
+    },
+    "Loop Detalle Ofertas": {
+      "main": [
+        [{ "node": "Merge1", "type": "main", "index": 0 }],
+        [{ "node": "Guardar original", "type": "main", "index": 0 }]
+      ]
+    },
+    "Guardar original": {
+      "main": [[{ "node": "HTTP Request — detalle de la oferta", "type": "main", "index": 0 }]]
+    },
+    "HTTP Request — detalle de la oferta": {
+      "main": [[{ "node": "HTML — extraer descripción", "type": "main", "index": 0 }]]
+    },
+    "HTML — extraer descripción": {
+      "main": [[{ "node": "Code — combinar descripción con los datos originales", "type": "main", "index": 0 }]]
+    },
+    "Code — combinar descripción con los datos originales": {
+      "main": [[{ "node": "Wait1", "type": "main", "index": 0 }]]
+    },
+    "Wait1": {
+      "main": [[{ "node": "Loop Detalle Ofertas", "type": "main", "index": 0 }]]
+    },
+    "Mi Perfil": {
+      "main": [[{ "node": "Merge1", "type": "main", "index": 1 }]]
+    },
+    "Merge1": {
+      "main": [[{ "node": "Loop Gemini", "type": "main", "index": 0 }]]
+    },
+    "Loop Gemini": {
+      "main": [
+        [{ "node": "If1", "type": "main", "index": 0 }],
+        [{ "node": "Guardar antes de Gemini", "type": "main", "index": 0 }]
+      ]
+    },
+    "Guardar antes de Gemini": {
+      "main": [[{ "node": "GEMINI", "type": "main", "index": 0 }]]
+    },
+    "GEMINI": {
+      "main": [
+        [{ "node": "parser", "type": "main", "index": 0 }],
+        [{ "node": "Wait Retry", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait Retry": {
+      "main": [[{ "node": "Code3", "type": "main", "index": 0 }]]
+    },
+    "Code3": {
+      "main": [[{ "node": "Loop Gemini", "type": "main", "index": 0 }]]
+    },
+    "parser": {
+      "main": [[{ "node": "Wait2", "type": "main", "index": 0 }]]
+    },
+    "Wait2": {
+      "main": [[{ "node": "Loop Gemini", "type": "main", "index": 0 }]]
+    },
+    "If1": {
+      "main": [[{ "node": "Create a database page", "type": "main", "index": 0 }]]
+    },
+    "Create a database page": {
+      "main": [[{ "node": "Send a text message", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Argentina/Buenos_Aires"
+  },
+  "id": "linkedin-job-alerts",
+  "tags": []
+}
