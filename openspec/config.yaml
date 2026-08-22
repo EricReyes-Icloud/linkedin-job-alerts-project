@@ -1,0 +1,37 @@
+schema: spec-driven
+
+context: |
+  Tech stack: n8n workflow automation (JSON workflow definition)
+  Architecture: Schedule-triggered pipeline — LinkedIn scraping → dedup → detail fetch → Gemini LLM scoring → Notion storage → Telegram alerts
+  Integrations: LinkedIn guest API (unofficial), Google Gemini 3.5 Flash Lite, Notion API, Telegram Bot API
+  Persistence: Notion database for job records; n8n workflow JSON as source of truth
+  Testing: No test runner detected; n8n workflows are validated via execution, not unit tests
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Consider impact on LinkedIn rate limiting and API stability
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Account for external API unreliability (LinkedIn, Gemini 503s)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+    - Note rate limiting constraints and retry patterns
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    guidelines:
+      - Validate workflow JSON structure before deployment
+      - Test with small keyword sets before full run
+      - Preserve rate limiting Wait nodes
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
