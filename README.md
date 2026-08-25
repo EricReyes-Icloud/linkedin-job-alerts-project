@@ -1,6 +1,8 @@
-# LinkedIn Job Alerts — búsqueda de trabajo automatizada con n8n + IA
+# LinkedIn Job Alerts
 
-Un workflow de [n8n](https://n8n.io) que scrapea LinkedIn todos los días, scorea cada oferta contra mi CV usando un LLM, genera un CV adaptado por oferta y me avisa por Telegram cuando encuentra un match fuerte — guardando todo organizado en Notion.
+> **⚠️ Este repo está en rebuild.** El sistema está migrando de n8n a Google Apps Script. Para el plan de construcción completo, ver [ROADMAP.md](ROADMAP.md) — la fuente única de verdad del proyecto.
+
+Un sistema automatizado que busca ofertas de empleo en bases de datos agregadas (vía JSearch), las scorea con Gemini, y guarda las mejores en Notion con notificación por Telegram.
 
 ## Por qué existe esto
 

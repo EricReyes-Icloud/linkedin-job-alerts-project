@@ -1,11 +1,11 @@
 schema: spec-driven
 
 context: |
-  Tech stack: n8n workflow automation (JSON workflow definition)
-  Architecture: Schedule-triggered pipeline — LinkedIn scraping → dedup → detail fetch → Gemini LLM scoring → Notion storage → Telegram alerts
-  Integrations: LinkedIn guest API (unofficial), Google Gemini 3.5 Flash Lite, Notion API, Telegram Bot API
-  Persistence: Notion database for job records; n8n workflow JSON as source of truth
-  Testing: No test runner detected; n8n workflows are validated via execution, not unit tests
+  Tech stack: Google Apps Script (plain JavaScript, IIFE pattern)
+  Architecture: Schedule-triggered pipeline — JSearch/RapidAPI fetch → URL dedup → Gemini AI scoring → Notion storage → Telegram alerts
+  Integrations: JSearch via RapidAPI, Google Gemini (gemini-2.0-flash), Notion API, Telegram Bot API
+  Persistence: Notion database for job records; Apps Script Properties Service for secrets
+  Testing: Manual verification against live APIs; no unit test runner (Apps Script constraint)
 
 rules:
   proposal:
