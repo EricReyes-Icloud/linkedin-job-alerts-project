@@ -12,7 +12,7 @@ Build order, at a glance. Each phase has detailed acceptance criteria in [§6](#
 |-------|------|-----------|
 | 0 | Accounts & keys | All 5 credentials obtained; secure storage decided |
 | 1 | Repo scaffold | Apps Script-compatible JS modules exist; config constants defined; README points here |
-| 2 | Pipeline implemented | All 6 pipeline steps work end-to-end against real APIs |
+| 2 | ✅ Pipeline implemented | All 6 pipeline steps work end-to-end against real APIs — **Completed 2026-08-25** |
 | 3 | Manual E2E test | ≥1 Notion page created with correct properties **and** Telegram message received |
 | 4 | Cloud deploy | Daily trigger live; parity gate verified (odd day → immediate exit) |
 | 5 | Hardening & operations | Logging conventions, quota tracking, and break-glass runbook in place |
@@ -301,4 +301,4 @@ None of these are scheduled or promised. Do **not** build any of them without an
 
 ## Next step
 
-Start **Phase 0**: create the RapidAPI account and subscribe to the JSearch free tier. Everything else builds on that first key.
+Start **Phase 3**: run the pipeline manually against real APIs to verify end-to-end behavior. The code is implemented and verified — now it needs to prove itself against live JSearch, Gemini, Notion, and Telegram services.
