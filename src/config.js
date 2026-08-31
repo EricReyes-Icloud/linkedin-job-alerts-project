@@ -14,19 +14,20 @@
 var CONFIG = {
   // --- Search ---
   KEYWORDS: [
-    'full stack developer junior',
-    'full-stack developer junior',
     'javascript developer junior',
-    'node developer junior',
     'react developer junior',
-    'AI developer junior'
+    'node developer junior'
   ],
+  // --- Pre-filter (Step 3.5) ---
+  // Conservative stance: exclude senior roles and pure Java; require at least one tech-stack keyword.
+  SENIORITY_EXCLUDE: /\b(senior|lead|manager|staff|principal|director|vp|head\s+of)\b|\bjava\b(?!script)/i,
+  TECH_STACK_KEYWORDS: ['javascript', 'typescript', 'react', 'node', 'express', 'firebase'],
   LOCATION: 'Colombia',
   REMOTE_ONLY: true,
 
   // --- Scoring ---
   SCORE_THRESHOLD: 75,
-  GEMINI_MODEL: 'gemini-3.7-flash',  // free-tier flash model — update as needed
+  GEMINI_MODEL: 'gemini-3.6-flash',  // free-tier flash model — update as needed
 
   // --- Notion ---
   // NOTION_DB_ID  → set in Script Properties
@@ -39,6 +40,11 @@ var CONFIG = {
   // --- API keys ---
   // RAPIDAPI_KEY   → set in Script Properties
   // GEMINI_API_KEY → set in Script Properties
+
+  // --- JSearch fallback ---
+  // When true, strict filters are tried first; if they yield 0 jobs,
+  // a relaxed query (fewer restrictions) is attempted as fallback.
+  JSEARCH_STRICT_FIRST: true,
 
   // --- Pipeline ---
   GEMINI_MAX_RETRIES: 3,

@@ -107,8 +107,12 @@ var UrlFetchApp = {
       headers['Content-Type'] = options.contentType;
     }
 
-    // Build curl command as a single string for execSync
-    var cmd = 'curl -s -S -L -w "\\n%{http_code}" -X ' + method;
+    // Build curl command as a single string for execSync.
+    // Include a real network read timeout (-m/--max-time) so a hanging server
+    // aborts at the HTTP layer instead of blocking until execSync kills the
+    // process (120000ms). Configurable via CURL_MAX_TIME, default 30s.
+    var curlMaxTime = process.env.CURL_MAX_TIME || 30;
+    var cmd = 'curl -s -S -L -m ' + curlMaxTime + ' -w "\\n%{http_code}" -X ' + method;
 
     // Add headers
     var headerKeys = Object.keys(headers);
@@ -132,7 +136,7 @@ var UrlFetchApp = {
     cmd += " '" + url + "'";
 
     try {
-      var result = execSync(cmd, { encoding: 'utf8', timeout: 30000 });
+      var result = execSync(cmd, { encoding: 'utf8', timeout: 120000 });
       // curl -w appends "\n<http_code>" at the end of the output
       var lines = result.split('\n');
       var httpCode = parseInt(lines.pop(), 10);

@@ -41,8 +41,16 @@ function runPipeline() {
     return;
   }
 
+  // --- Step 3.5: Pre-filter (new) ---
+  var filteredJobs = Services.preFilterJobs(newJobs);
+  Services.log('Step 3.5 — ' + filteredJobs.length + ' jobs after pre-filter');
+  if (filteredJobs.length === 0) {
+    Services.log('All jobs filtered out — pipeline finished');
+    return;
+  }
+
   // --- Step 4: Score with Gemini ---
-  var scoredJobs = scoreWithGemini(newJobs);
+  var scoredJobs = scoreWithGemini(filteredJobs);
   Services.log('Step 4 — scored ' + scoredJobs.length + ' jobs');
 
   // --- Step 5: Filter by threshold ---
