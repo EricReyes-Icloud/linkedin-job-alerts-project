@@ -50,7 +50,11 @@ var Services = (function () {
 
   // --- Advanced utilities ---
   function fetchWithRetry(url, options, maxRetries, backoffMs) {
-    maxRetries = maxRetries || 2;
+    // Sentinel: an explicit 0 means ZERO retries (the caller owns retrying).
+    // Only when maxRetries is omitted do we default to 2 internal retries.
+    if (maxRetries === undefined) {
+      maxRetries = 2;
+    }
     backoffMs = backoffMs || 1000;
     var attempt;
     for (attempt = 1; attempt <= maxRetries + 1; attempt++) {
@@ -78,6 +82,90 @@ var Services = (function () {
     return JSON.parse(stripped);
   }
 
+  /**
+   * Coerce a Gemini score value (number or numeric string) to an integer
+   * clamped to 0-100. Returns null when the value is not a finite number.
+   *
+   * @param {*} value - Number or numeric string (e.g. 85 or "85").
+   * @return {?number} - Integer in [0, 100], or null when unparseable.
+   */
+  function toScoreNumber(value) {
+    var num = Number(value);
+    if (typeof value === 'string' && value.trim() === '') {
+      return null;
+    }
+    if (typeof num !== 'number' || !isFinite(num)) {
+      return null;
+    }
+    return Math.max(0, Math.min(100, Math.round(num)));
+  }
+
+  /**
+   * Coerce a Gemini job_index value (number or numeric string) to a
+   * non-negative integer. Returns null when it does not parse to a finite
+   * integer.
+   *
+   * @param {*} value - Number or numeric string (e.g. 0 or "0").
+   * @return {?number} - Non-negative integer, or null when unparseable.
+   */
+  function toJobIndex(value) {
+    var num = Number(value);
+    if (typeof value === 'string' && value.trim() === '') {
+      return null;
+    }
+    if (typeof num !== 'number' || !isFinite(num)) {
+      return null;
+    }
+    var intVal = Math.round(num);
+    if (intVal < 0) {
+      return null;
+    }
+    return intVal;
+  }
+
+  /**
+   * Extract the model's text output from a Gemini :generateContent response.
+   *
+   * Gemini always wraps the result in:
+   *   { candidates: [{ content: { parts: [{ text: "..." }] } }] }
+   *
+   * This function parses the raw response string, extracts the text from
+   * candidates[0].content.parts[0].text (concatenating all parts), and
+   * returns it.  If the shape doesn't match the envelope — or if parsing
+   * fails — the original raw text is returned unchanged so that any
+   * direct-JSON path still works.
+   *
+   * @param {string} rawText  - The raw HTTP response body from Gemini.
+   * @return {string}         - The model's generated text, or rawText as-is.
+   */
+  function extractGeminiText(rawText) {
+    try {
+      var parsed = JSON.parse(rawText);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
+          parsed.candidates && Array.isArray(parsed.candidates) &&
+          parsed.candidates.length > 0) {
+        var candidate = parsed.candidates[0];
+        var parts = candidate && candidate.content && candidate.content.parts;
+        if (parts && Array.isArray(parts) && parts.length > 0) {
+          var texts = [];
+          for (var i = 0; i < parts.length; i++) {
+            if (parts[i] && typeof parts[i].text === 'string') {
+              texts.push(parts[i].text);
+            }
+          }
+          if (texts.length > 0) {
+            return texts.join('');
+          }
+        }
+      }
+      // Shape didn't match the envelope — fall through
+      return rawText;
+    } catch (e) {
+      // Not valid JSON — return as-is
+      return rawText;
+    }
+  }
+
   function normalizeUrl(url) {
     if (!url) {
       log('normalizeUrl: null or empty URL');
@@ -89,12 +177,63 @@ var Services = (function () {
   }
 
   // --- API Clients ---
+
+  /**
+   * Build a JSearch /search-v2 query string for a keyword.
+   *
+   * @param {string} keyword  - The search keyword(s).
+   * @param {boolean} strict  - true  → all restrictive filters (FULLTIME,
+   *                            under-3-years, no-experience, week).
+   *                            false → relaxed (drop employment_types and
+   *                            job_requirements, widen date_posted to month).
+   *                            country=co and work_from_home=true are always
+   *                            kept (core user requirements).
+   * @returns {string} Full query string (without the leading '?').
+   */
+  function buildJSearchQuery(keyword, strict) {
+    var base = 'query=' + encodeURIComponent(keyword) +
+      '&page=1&num_pages=1' +
+      '&country=co&work_from_home=true';
+
+    if (strict) {
+      return base +
+        '&date_posted=week' +
+        '&job_requirements=under_3_years_experience,no_experience' +
+        '&employment_types=FULLTIME';
+    }
+
+    // Relaxed: drop job_requirements and employment_types,
+    // widen date_posted from week → month.
+    return base + '&date_posted=month';
+  }
+
+  /**
+   * Parse the raw JSearch response and extract the jobs array.
+   * Logs explicit warnings for API errors or malformed responses.
+   *
+   * @param {string} rawText - The raw HTTP response body.
+   * @returns {Array} Array of job objects (may be empty).
+   */
+  function parseJSearchResponse(rawText) {
+    var data = JSON.parse(rawText);
+
+    if (data && data.status && data.status !== 'OK') {
+      log('[STEP 2] JSearch API status=' + data.status +
+        (data.error ? ' error=' + data.error : ''));
+    }
+
+    var jobs = [];
+    if (data && data.data && data.data.jobs) {
+      jobs = data.data.jobs;
+    }
+    return jobs;
+  }
+
   function fetchFromJSearch(keyword, location) {
     try {
       var endpoint = CONFIG.JSEARCH_ENDPOINT;
       var host = CONFIG.JSEARCH_HOST;
       var apiKey = getProperty('RAPIDAPI_KEY');
-      var url = endpoint + '?query=' + encodeURIComponent(keyword) + '&page=1&num_pages=1&date_posted=week&country=co&work_from_home=true';
       var options = {
         method: 'GET',
         headers: {
@@ -102,25 +241,145 @@ var Services = (function () {
           'X-RapidAPI-Host': host
         }
       };
+
+      var useStrictFirst = CONFIG.JSEARCH_STRICT_FIRST !== false;
+
+      // --- Pass 1: strict filters (or relaxed if strict is disabled) ---
+      var strictQuery = buildJSearchQuery(keyword, true);
+      var url = endpoint + '?' + strictQuery;
       var response = fetchWithRetry(url, options);
-      var rawText = response.getContentText();
-      var data = JSON.parse(rawText);
-      var jobs = [];
-      if (data && data.data && data.data.jobs) {
-        jobs = data.data.jobs;
+      var jobs = parseJSearchResponse(response.getContentText());
+
+      if (jobs.length > 0 || !useStrictFirst) {
+        log('[STEP 2] keyword="' + keyword + '" strict returned ' + jobs.length + ' jobs');
+        return jobs;
       }
+
+      // --- Pass 2: relaxed fallback (strict yielded 0 and toggle is on) ---
+      log('[STEP 2] keyword="' + keyword + '" strict returned 0 jobs, trying relaxed filters');
+      var relaxedQuery = buildJSearchQuery(keyword, false);
+      var relaxedUrl = endpoint + '?' + relaxedQuery;
+      response = fetchWithRetry(relaxedUrl, options);
+      jobs = parseJSearchResponse(response.getContentText());
+
+      log('[STEP 2] keyword="' + keyword + '" relaxed returned ' + jobs.length + ' jobs');
       return jobs;
+
     } catch (e) {
       log('[STEP 2] ERROR: JSearch fetch — keyword="' + keyword + '": ' + e.message);
       return [];
     }
   }
 
+  function preFilterJobs(jobs) {
+    // Guard: if config missing, return input unchanged
+    if (!(CONFIG.SENIORITY_EXCLUDE instanceof RegExp)) {
+      Services.log('Step 3.5 — SENIORITY_EXCLUDE not a RegExp, skipping title exclusion');
+    }
+    if (!Array.isArray(CONFIG.TECH_STACK_KEYWORDS)) {
+      Services.log('Step 3.5 — TECH_STACK_KEYWORDS not an array, retaining all jobs');
+      return jobs;
+    }
+
+    var excluded = [];
+    var retained = [];
+    for (var i = 0; i < jobs.length; i++) {
+      var job = jobs[i];
+      var title = (job.job_title || '').toLowerCase();
+      var desc = (job.job_description || '').toLowerCase();
+      var text = title + ' ' + desc;
+      // 1. Seniority exclusion (only if regex is valid)
+      if (CONFIG.SENIORITY_EXCLUDE instanceof RegExp && CONFIG.SENIORITY_EXCLUDE.test(title)) {
+        excluded.push({ job: job, reason: 'seniority' });
+        continue;
+      }
+      // 2. Tech-stack inclusion (require >=1 match)
+      var hasTech = CONFIG.TECH_STACK_KEYWORDS.some(function(kw) {
+        return text.indexOf(kw.toLowerCase()) !== -1;
+      });
+      if (!hasTech) {
+        excluded.push({ job: job, reason: 'no_tech_match' });
+        continue;
+      }
+      retained.push(job);
+    }
+    if (excluded.length > 0) {
+      Services.log('Step 3.5 — excluded ' + excluded.length + ' jobs: ' +
+        excluded.map(function(e) { return '"' + e.job.job_title + '" (' + e.reason + ')'; }).join(', '));
+    }
+    return retained;
+  }
+
+  /**
+   * Extract a short scoring-oriented summary of a job description.
+   * Preserves signal Gemini needs (tech keywords, seniority, work mode,
+   * role type, location) while keeping the payload small.
+   * Does NOT mutate job.job_description — the original stays intact.
+   */
+  function summarizeDescriptionForScoring(job) {
+    var description = job.job_description;
+    if (!description) {
+      return 'No description';
+    }
+
+    var scoringKeywords = [
+      'javascript', 'typescript', 'react', 'node', 'express', 'firebase', 'mysql',
+      'html', 'css', 'python', 'php', 'vue', 'angular', 'next', 'docker', 'aws',
+      'git', 'sql', 'nosql', 'mongodb', 'graphql',
+      'junior', 'mid-level', 'entry', 'experience', 'years',
+      'remote', 'work from home', 'hybrid', 'onsite', 'on-site', 'wfh',
+      'full stack', 'fullstack', 'full-stack', 'backend', 'front-end', 'frontend',
+      'colombia', 'latam', 'latin america'
+    ];
+
+    // Split into chunks: newlines first, then sentences within long chunks
+    var rawChunks = description.split('\n');
+    var sentences = [];
+    var i, p;
+    for (i = 0; i < rawChunks.length; i++) {
+      var chunk = rawChunks[i].trim();
+      if (!chunk) { continue; }
+      if (chunk.length > 150) {
+        var parts = chunk.split('. ');
+        for (p = 0; p < parts.length; p++) {
+          if (parts[p].trim()) {
+            sentences.push(parts[p].trim());
+          }
+        }
+      } else {
+        sentences.push(chunk);
+      }
+    }
+
+    var matched = [];
+    var j, k;
+    for (j = 0; j < sentences.length; j++) {
+      var lower = sentences[j].toLowerCase();
+      for (k = 0; k < scoringKeywords.length; k++) {
+        if (lower.indexOf(scoringKeywords[k]) !== -1) {
+          matched.push(sentences[j]);
+          break;
+        }
+      }
+    }
+
+    if (matched.length > 0) {
+      var result = matched.join(' ');
+      if (result.length > 600) {
+        return result.substring(0, 600);
+      }
+      return result;
+    }
+
+    // Fallback: bounded prefix when no keyword matches
+    return description.substring(0, 600);
+  }
+
   function scoreSingleJob(job) {
     var geminiApiKey = getProperty('GEMINI_API_KEY');
     var model = CONFIG.GEMINI_MODEL;
     var endpoint = CONFIG.GEMINI_ENDPOINT + model + ':generateContent?key=' + geminiApiKey;
-    var jobText = 'Title: ' + job.job_title + '\nCompany: ' + (job.company_name || 'Unknown') + '\nDescription: ' + (job.job_description || 'No description');
+    var jobText = 'Title: ' + job.job_title + '\nCompany: ' + (job.company_name || 'Unknown') + '\nDescription: ' + summarizeDescriptionForScoring(job);
     var prompt = jobText + '\n\nOwner Profile: ' + CONFIG.OWNER_PROFILE +
       '\n\nScoring criteria (score 0-100, higher = better match):' +
       '\n- Junior level match (0-3 years experience required)' +
@@ -152,12 +411,10 @@ var Services = (function () {
       try {
         var response = fetchWithRetry(endpoint, options, 0);
         var responseText = response.getContentText();
-        var parsed = parseJSONWithFenceStrip(responseText);
-        var score = parsed.score;
-        if (typeof score !== 'number') {
-          score = 0;
-        }
-        score = Math.max(0, Math.min(100, Math.round(score)));
+        var extracted = extractGeminiText(responseText);
+        var parsed = parseJSONWithFenceStrip(extracted);
+        var coercedScore = toScoreNumber(parsed.score);
+        var score = (coercedScore === null) ? 0 : coercedScore;
         job.score = score;
         log('Scored job "' + job.job_title + '": ' + score);
         return job;
@@ -189,7 +446,7 @@ var Services = (function () {
       var j = jobs[i];
       jobLines += (i + 1) + '. Title: ' + (j.job_title || 'Unknown') +
         '\n   Company: ' + (j.company_name || 'Unknown') +
-        '\n   Description: ' + (j.job_description || 'No description') + '\n\n';
+        '\n   Description: ' + summarizeDescriptionForScoring(j) + '\n\n';
     }
 
     var prompt = 'Owner Profile: ' + CONFIG.OWNER_PROFILE +
@@ -231,12 +488,18 @@ var Services = (function () {
     var maxRetries = CONFIG.GEMINI_MAX_RETRIES;
     var backoffMs = CONFIG.GEMINI_RETRY_DELAY_MS;
     var attempt;
+    var rawLogged = false;
 
     for (attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         var response = fetchWithRetry(endpoint, options, 0);
         var responseText = response.getContentText();
-        var parsed = parseJSONWithFenceStrip(responseText);
+        if (!rawLogged) {
+          log('[STEP 4] Gemini raw response (truncated): ' + responseText.substring(0, 300));
+          rawLogged = true;
+        }
+        var extracted = extractGeminiText(responseText);
+        var parsed = parseJSONWithFenceStrip(extracted);
 
         // parsed may be the array directly, or wrapped in {scores: [...]}
         var scoresArray = Array.isArray(parsed) ? parsed : (parsed.scores || parsed.results || []);
@@ -245,8 +508,12 @@ var Services = (function () {
         var scoreMap = {};
         for (var k = 0; k < scoresArray.length; k++) {
           var entry = scoresArray[k];
-          if (typeof entry.job_index === 'number' && typeof entry.score === 'number') {
-            scoreMap[entry.job_index] = Math.max(0, Math.min(100, Math.round(entry.score)));
+          var entryIndex = (entry && typeof entry === 'object') ? toJobIndex(entry.job_index) : null;
+          var entryScore = (entry && typeof entry === 'object') ? toScoreNumber(entry.score) : null;
+          if (entryIndex !== null && entryScore !== null) {
+            scoreMap[entryIndex] = entryScore;
+          } else {
+            log('Score entry skipped (bad index/score): ' + JSON.stringify(entry));
           }
         }
 
@@ -391,6 +658,7 @@ var Services = (function () {
     parseJSONWithFenceStrip: parseJSONWithFenceStrip,
     normalizeUrl: normalizeUrl,
     fetchFromJSearch: fetchFromJSearch,
+    preFilterJobs: preFilterJobs,
     scoreSingleJob: scoreSingleJob,
     scoreJobsBatch: scoreJobsBatch,
     notionQueryDatabase: notionQueryDatabase,
