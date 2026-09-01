@@ -58,7 +58,8 @@ function runPipeline() {
   Services.log('Step 5 — ' + matches.length + ' matches above threshold');
 
   if (matches.length === 0) {
-    Services.log('No matches — pipeline finished');
+    Services.log('No matches — sending summary to Telegram');
+    sendNoMatchSummary(scoredJobs);
     return;
   }
 
@@ -176,4 +177,22 @@ function formatTelegramMessage(job) {
   return '🎯 Nueva oferta con match (' + job.score + '/100)\n\n' +
     job.title + ' en ' + (job.company_name || 'Unknown') + '\n\n' +
     job.job_apply_link;
+}
+
+function sendNoMatchSummary(scoredJobs) {
+  var lines = scoredJobs.map(function(job) {
+    var title = job.job_title || job.title || 'Unknown';
+    var score = (typeof job.score === 'number') ? job.score : 0;
+    return '• ' + title + ' — ' + score + '/100';
+  });
+  var msg = '🔍 Sin matches hoy (' + scoredJobs.length + ' ofertas scoreadas, ninguna supero el umbral ≥ ' +
+    CONFIG.SCORE_THRESHOLD + '):\n\n' + lines.join('\n');
+  try {
+    Services.telegramSendMessage(
+      Services.getProperty('TELEGRAM_CHAT_ID'),
+      msg
+    );
+  } catch (e) {
+    Services.log('[STEP 5] ERROR: Telegram no-match summary failed: ' + e.message);
+  }
 }
