@@ -1,156 +1,329 @@
 # LinkedIn Job Alerts
 
-> **⚠️ Este repo está en rebuild.** El sistema está migrando de n8n a Google Apps Script. Para el plan de construcción completo, ver [ROADMAP.md](ROADMAP.md) — la fuente única de verdad del proyecto.
+Pipeline automatizado de busqueda y evaluacion de ofertas de empleo que ejecuta busquedas en tableros agregados (LinkedIn, Indeed, Glassdoor, ZipRecruiter), las evalua con un modelo de IA, filtra las mejores y notifica por Telegram. Totalmente gratuito, ejecutado en Google Apps Script con un trigger diario.
 
-Un sistema automatizado que busca ofertas de empleo en bases de datos agregadas (vía JSearch), las scorea con Gemini, y guarda las mejores en Notion con notificación por Telegram.
+---
 
-## Por qué existe esto
+## Descripcion del proyecto
 
-En febrero de 2026 me quedé sin trabajo. En vez de pasar el día entero scrolleando LinkedIn a mano, decidí aprovechar el tiempo para meterme de lleno en algo que venía posponiendo: construir automatizaciones reales con n8n, no solo tutoriales.
+LinkedIn Job Alerts resuelve un problema concreto en la busqueda laboral: el tiempo invertido scrolleando portales de empleo para encontrar ofertas alineadas con un perfil tecnico. El sistema ejecuta un pipeline que **busca** ofertas en multiples tableros via JSearch, las **evalua** contra un perfil profesional con Gemini, las **filtra** por relevancia y las **notifica** en tiempo real via Telegram. Todo funciona en la nube sin infraestructura propia y sin costo.
 
-Este repo es el resultado — con toda la complejidad real que tuvo, no la versión idealizada. Tuve que resolver rate limiting de LinkedIn, sincronización de loops que perdían datos entre pasos, respuestas 503 de la API de Gemini a mitad de una corrida, y varios bugs sutiles de cómo n8n maneja índices dentro de loops. Todo eso está reflejado en el diseño final.
+El pipeline opera cada dia intermedio (parity gate) para optimizar las cuotas gratuitas de las APIs involucradas. La configuracion es flexible: keywords, umbral de score, modelo de IA y exclusiones de seniority se ajustan desde un archivo de configuracion centralizado.
 
-## Qué hace
+---
 
-1. **Busca** ofertas en LinkedIn todos los días a las 8am, con varios keywords en paralelo (con rate limiting para no gatillar el bloqueo anti-scraping de LinkedIn)
-2. **Deduplica** ofertas que aparecen en más de una búsqueda, y contra las que ya existen en la base de Notion
-3. **Trae el detalle completo** de cada oferta nueva (la descripción completa del puesto)
-4. **Scorea** cada oferta contra mi perfil usando un LLM (Gemini), que devuelve un score 0-100, una justificación y un CV adaptado a esa oferta específica
-5. **Guarda** todo en una base de Notion (título, empresa, score, justificación, CV adaptado, URL)
-6. **Avisa por Telegram** cuando el score supera un umbral configurable
+
+
+## Stack tecnologico
+
+
+| Componente         | Herramienta                        | Rol                                                                   |
+| ------------------ | ---------------------------------- | --------------------------------------------------------------------- |
+| Runtime            | Google Apps Script                 | Ejecucion del pipeline (trigger diario, ~$0)                          |
+| Busqueda de empleo | JSearch via RapidAPI               | Agrega LinkedIn, Indeed, Glassdoor, ZipRecruiter en JSON estructurado |
+| Evaluacion IA      | Google Gemini (`gemini-3.6-flash`) | Score de relevancia 0-100 contra perfil profesional                   |
+| Almacenamiento     | Notion API                         | Base de datos persistente de ofertas evaluadas                        |
+| Notificaciones     | Telegram Bot API                   | Alertas en tiempo real por oferta y resumen diario                    |
+
+
+**Costo total: $0** — Todos los componentes operan en tiers gratuitos.
+
+---
+
+
 
 ## Arquitectura
 
+El diagrama interactivo completo (con navegacion, temas oscuro/claro y exportacion a PNG/SVG) esta disponible en `[docs/diagrams/architecture.html](docs/diagrams/architecture.html)`.
+
+### Diagrama del pipeline
+
 ```
-Schedule Trigger (8am)
-    │
-    ├──→ job titles (lista de keywords)
-    │        │
-    │        ▼
-    │    Loop Over Items ──┐
-    │        │              │
-    │        ▼              │
-    │    HTTP Request        │  (con Wait entre cada
-    │    (LinkedIn guest API)│   búsqueda, rate limiting)
-    │        │              │
-    │        ▼              │
-    │    HTML (extraer      │
-    │    listado)           │
-    │        │              │
-    │        └──────────────┘
-    │        ▼
-    │    Code (aplanar resultados)
-    │        │
-    │        ▼
-    │    Code1 (dedup dentro del batch)
-    │        │
-    │        ├──→ Get many database pages (Notion) → ExistingIds
-    │        │
-    │        ▼
-    │    Merge (sincroniza ambas ramas)
-    │        │
-    │        ▼
-    │    Code2 (marca existe: true/false)
-    │        │
-    │        ▼
-    │    If (existe == false)
-    │        │
-    │        ▼
-    │    Loop Detalle Ofertas ──┐
-    │        │                   │
-    │        ▼                   │
-    │    Guardar original         │
-    │        │                   │
-    │        ▼                   │
-    │    HTTP Request (detalle)   │  (con Wait, rate limiting)
-    │        │                   │
-    │        ▼                   │
-    │    HTML (extraer descripción)│
-    │        │                   │
-    │        ▼                   │
-    │    Code (combinar con original)
-    │        │                   │
-    │        └───────────────────┘
-    │        ▼
-    ├──→ Merge1 (junta con "Mi Perfil")
-    │        │
-    │        ▼
-    │    Loop Gemini ──┐
-    │        │          │
-    │        ▼          │
-    │    Guardar antes   │
-    │    de Gemini        │
-    │        │          │
-    │        ▼          │
-    │    GEMINI (scoring) │  (con retry en caso de error 503)
-    │        │          │
-    │        ▼          │
-    │    parser           │
-    │        │          │
-    │        └──────────┘
-    │        ▼
-    │    If1 (score >= umbral)
-    │        │
-    │        ▼
-    │    Create a database page (Notion)
-    │        │
-    │        ▼
-    │    Send a text message (Telegram)
-    │
-    └──→ Mi Perfil (CV en texto, para el prompt de Gemini)
+┌─────────────────────────────────────────────────────────────────────┐
+│                     TRIGGER DIARIO (~8:00 AM)                       │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PASO 1: PARITY GATE                                               │
+│  Calcula dia del anio % 2                                           │
+│  ├─ Impar → EXIT inmediato (0 llamadas a API)                       │
+│  └─ Par  → Continua                                                │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PASO 2: FETCH JOBS (JSearch via RapidAPI)                         │
+│  Itera 3 keywords:                                                  │
+│  ├─ 'javascript developer junior'                                   │
+│  ├─ 'react developer junior'                                        │
+│  └─ 'node developer junior'                                         │
+│  Estrategia: strict query primero → relaxed fallback si 0 resultados│
+│  ~3 llamadas RapidAPI por ejecucion                                 │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PASO 3: NORMALIZE + DEDUP                                         │
+│  ├─ Dedup dentro del batch (URLs normalizadas)                      │
+│  └─ Dedup contra historial de Notion (URLs existentes)              │
+│  Falla de Notion no fatal → procede con dedup del batch             │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PASO 3.5: PRE-FILTER                                              │
+│  ├─ Excluir por seniority: senior, lead, manager, staff, principal, │
+│  │  director, vp, head of, java (sin script)                        │
+│  └─ Requerir >=1 tech keyword: javascript, typescript, react, node, │
+│     express, firebase en titulo + descripcion                        │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PASO 4: SCORE CON GEMINI (batch de 15)                            │
+│  ├─ Lote: hasta 15 ofertas por llamada                              │
+│  ├─ Fallback: score individual si falla el lote                     │
+│  └─ Retry: hasta 3 intentos con backoff (2s, 4s, 6s)               │
+│  Score: 0-100, entero, respuesta JSON forzada                      │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PASO 5: FILTER (score >= 75)                                       │
+│  ├─ Matches → Paso 6                                                │
+│  └─ Sin matches → Resumen Telegram con todas las ofertas scoreadas  │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PASO 6: STORE + NOTIFY                                            │
+│  Para cada match:                                                   │
+│  ├─ Crear pagina en Notion (con todas las propiedades)              │
+│  └─ Enviar mensaje Telegram con titulo, empresa, link y score      │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Lecciones aprendidas (la parte interesante)
+---
 
-- **Rate limiting real**: el endpoint no oficial de búsqueda de LinkedIn banea la IP si le pegás muchas veces seguidas. Solución: un `Loop Over Items` con batch size 1 + un nodo `Wait` entre cada iteración, tanto para las búsquedas como para el detalle de cada oferta y las llamadas a Gemini.
 
-- **`$itemIndex` no significa lo que uno espera dentro de un loop de a 1 item**: cuando un `Split In Batches` tiene batch size 1, `$itemIndex` dentro de esa iteración siempre vale 0 — no representa la posición global dentro del batch total. Usar `.all()[$itemIndex]` para recuperar datos de otro nodo casi siempre trae el ítem equivocado. La solución que terminé usando: un nodo "Guardar original" justo antes de cualquier paso que sobrescriba el `json` (como un HTTP Request), y después recuperarlo con `.first()` en vez de por índice — porque con batch size 1, solo hay un ítem viajando por esa rama en cada vuelta.
 
-- **Los nodos HTTP Request reemplazan todo el `json` de entrada con la respuesta**: si necesitás conservar datos que traías antes de la llamada, hay que guardarlos explícitamente en un campo separado (`_original`) antes de que el HTTP Request los pise.
+## Flujo del pipeline
 
-- **Merge en modo "Choose Branch" como semáforo**: cuando dos ramas necesitan terminar antes de que el flujo continúe (por ejemplo, traer los IDs existentes de Notion antes de comparar), un nodo `Merge` en modo `chooseBranch` obliga a n8n a esperar ambas ramas, aunque solo te quedes con los datos de una.
+El pipeline se ejecuta como una funcion sincronica en Google Apps Script. Cada paso esta documentado en `src/pipeline.js` y delega interacciones externas a `src/services.js`.
 
-- **Reintentos ante errores transitorios de LLM APIs**: la API de Gemini devuelve ocasionalmente `503 - model overloaded`. En vez de perder esa oferta silenciosamente, la rama de error del nodo vuelve a meter el ítem en el loop (con un contador de intentos para no reintentar infinito).
 
-## Setup
+| Paso                 | Descripcion                                                                                                                                  | Llamadas API                          | Comportamiento en error                                  |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------- |
+| 1. Parity gate       | Calcula `dayOfYear % 2`. Dias impares → exit inmediato con 0 llamadas API.                                                                   | 0                                     | N/A                                                      |
+| 2. Fetch jobs        | Itera las 3 keywords configuradas. Para cada keyword: query strict primero; si 0 resultados, fallback a relaxed (mas permisivo).             | ~3 RapidAPI                           | Error por keyword es no-fatal; continua con las demas    |
+| 3. Normalize + dedup | Normaliza URLs (elimina query string y trailing slash). Dedup dentro del batch Y contra historial de Notion.                                 | ~1 Notion (query)                     | Falta de Notion es no-fatal; procede con dedup del batch |
+| 3.5. Pre-filter      | Excluye titulos con seniority prohibido. Requiere >=1 tech keyword en titulo+descripcion.                                                    | 0                                     | Config incompleta → no filtra                            |
+| 4. Score             | Lotes de 15 ofertas. Gemini retorna JSON con `score` (0-100). Retry hasta 3 veces con backoff. Fallback a score individual si falla el lote. | 1 Gemini por lote                     | Score fallido → 0                                        |
+| 5. Filter            | Filtra ofertas con `score >= 75`.                                                                                                            | 0                                     | N/A                                                      |
+| 6. Store + notify    | Crea pagina en Notion + envia Telegram por cada match. Si 0 matches → envia resumen con todas las ofertas scoreadas.                         | 1 Notion write + 1 Telegram por match | Error por oferta es no-fatal                             |
 
-### Requisitos
 
-- Una instancia de [n8n](https://n8n.io) (self-hosted o cloud)
-- Una cuenta de [Notion](https://notion.so) con una integración creada y una database compartida con ella
-- Una API key de [Google AI Studio](https://aistudio.google.com/apikey) (tier gratuito de Gemini)
-- Un bot de [Telegram](https://core.telegram.org/bots#how-do-i-create-a-bot) (vía @BotFather) y tu Chat ID
+---
 
-### Pasos
 
-1. Importá `linkedin-job-alerts.json` en tu instancia de n8n
-2. Creá una database en Notion con estas columnas: `Titulo` (Title), `Empresa` (Text), `URL` (URL), `id_externo` (Text), `Score` (Number), `Justificación` (Text), `CV Adaptado` (Text), `Fecha detección` (Date)
-3. Compartí la database con tu integración de Notion (`•••` → Connections)
-4. En el nodo **`Get many database pages`** y **`Create a database page`**: seleccioná tu database y tu credential de Notion
-5. En el nodo **`GEMINI`**: reemplazá `YOUR_GEMINI_API_KEY` en la URL por tu API key real
-6. En el nodo **`Mi Perfil`**: pegá tu propio CV/perfil en texto plano
-7. En el nodo **`Send a text message`**: reemplazá `YOUR_TELEGRAM_CHAT_ID` y configurá tu credential de Telegram
-8. En el nodo **`job titles`**: ajustá los keywords de búsqueda a tu perfil
-9. En el nodo **`HTTP Request`** (búsqueda de LinkedIn): ajustá `YOUR_LOCATION` a tu ubicación
-10. Ajustá el umbral de score en el nodo **`If1`** (por defecto: 85)
-11. Activá el workflow
 
-### Variables de entorno (recomendado, en vez de hardcodear la key)
+## Configuracion
 
-Si tu instancia de n8n soporta variables de entorno, es más seguro usar `{{ $env.GEMINI_API_KEY }}` en vez de pegar la key directamente en el nodo.
+Todas las constantes estan definidas en `src/config.js`. Los valores mostrados son los defaults del sistema.
 
-## Stack
+### Busqueda
 
-- **n8n** — orquestación del flujo
-- **LinkedIn guest API** (no oficial) — scraping de ofertas
-- **Google Gemini** (`gemini-3.5-flash-lite`) — scoring y generación de CV adaptado
-- **Notion API** — almacenamiento
-- **Telegram Bot API** — alertas
 
-## Disclaimer
+| Constante              | Valor                                                                                | Descripcion                                              |
+| ---------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| `KEYWORDS`             | `['javascript developer junior', 'react developer junior', 'node developer junior']` | Términos de busqueda en JSearch                          |
+| `LOCATION`             | `'Colombia'`                                                                         | Pais/filtro de ubicacion                                 |
+| `REMOTE_ONLY`          | `true`                                                                               | Solo ofertas remotas                                     |
+| `JSEARCH_STRICT_FIRST` | `true`                                                                               | Query estricto primero; fallback relaxed si 0 resultados |
 
-Este flujo usa el endpoint no oficial de búsqueda de LinkedIn (`jobs-guest/jobs/api`), que no es una API pública soportada. Puede cambiar o dejar de funcionar sin aviso, y un uso agresivo puede resultar en bloqueos temporales de IP. Usalo con criterio y respetando los términos de servicio de LinkedIn.
 
-## Licencia
 
-MIT — usalo, adaptalo, rómpelo y arreglalo como quieras.
+
+### Pre-filtro (Paso 3.5)
+
+
+| Constante             | Valor                                                                                   | Descripcion                                                                |
+| --------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `SENIORITY_EXCLUDE`   | `/\b(senior|lead|manager|staff|principal|director|vp|head\s+of)\b|\bjava\b(?!script)/i` | Regex que excluye titulos con seniority prohibido y Java puro (sin script) |
+| `TECH_STACK_KEYWORDS` | `['javascript', 'typescript', 'react', 'node', 'express', 'firebase']`                  | Requiere >=1 coincidencia en titulo + descripcion                          |
+
+
+
+
+### Scoring
+
+
+| Constante               | Valor                | Descripcion                                      |
+| ----------------------- | -------------------- | ------------------------------------------------ |
+| `SCORE_THRESHOLD`       | `75`                 | Umbral minimo de score para considerar match     |
+| `GEMINI_MODEL`          | `'gemini-3.6-flash'` | Modelo de Gemini para scoring (free-tier flash)  |
+| `GEMINI_MAX_RETRIES`    | `3`                  | Maximo de reintentos por llamada a Gemini        |
+| `GEMINI_RETRY_DELAY_MS` | `2000`               | Delay base para backoff exponencial (2s, 4s, 6s) |
+| `BATCH_SIZE`            | `15`                 | Ofertas por lote en scoring batch                |
+
+
+
+
+### Pipeline
+
+
+| Constante               | Valor          | Descripcion                                        |
+| ----------------------- | -------------- | -------------------------------------------------- |
+| `DESCRIPTION_MAX_CHARS` | `1999`         | Limite de caracteres para Notion rich_text (~2000) |
+| `NOTION_API_VERSION`    | `'2022-06-28'` | Version de la API de Notion                        |
+
+
+---
+
+
+
+## Variables de entorno
+
+Las credenciales se almacenan en **Apps Script Script Properties** (nunca en el codigo fuente). Se configuran desde: `Archivo → Propiedades del proyecto → Propiedades del script`.
+
+
+| Propiedad            | Servicio         | Descripcion                                |
+| -------------------- | ---------------- | ------------------------------------------ |
+| `RAPIDAPI_KEY`       | RapidAPI         | Clave de acceso a JSearch                  |
+| `GEMINI_API_KEY`     | Google AI Studio | Clave de Gemini para scoring               |
+| `NOTION_TOKEN`       | Notion           | Token de integracion interna de Notion     |
+| `NOTION_DB_ID`       | Notion           | ID de la base de datos "Trabajos"          |
+| `TELEGRAM_BOT_TOKEN` | Telegram         | Token del bot (via @BotFather)             |
+| `TELEGRAM_CHAT_ID`   | Telegram         | ID del chat donde se envian notificaciones |
+
+
+> Para pruebas locales, se puede usar un archivo `.env` (excluido de `.gitignore`). En produccion, las propiedades se gestionan exclusivamente desde el servicio de Script Properties de Apps Script.
+
+---
+
+
+
+## Schema de Notion
+
+La base de datos "Trabajos" en Notion debe tener las siguientes propiedades:
+
+
+| Propiedad           | Tipo      | Descripcion                                              |
+| ------------------- | --------- | -------------------------------------------------------- |
+| `Nombre`            | title     | Titulo de la oferta                                      |
+| `Empresa`           | rich_text | Nombre de la empresa                                     |
+| `Link`              | url       | URL de aplicacion (fuente de dedup)                      |
+| `Score`             | number    | Score 0-100 de Gemini                                    |
+| `Fuente`            | select    | Publicador / tablero (LinkedIn, Indeed, Glassdoor...)    |
+| `Descripción`       | rich_text | Descripcion truncada a ~1999 caracteres                  |
+| `Estado`            | select    | Nueva / Aplicada / Descartada (se actualiza manualmente) |
+| `Keyword`           | rich_text | Keyword que encontro la oferta                           |
+| `Fecha publicación` | date      | Fecha de publicacion de la oferta (opcional)             |
+
+
+> La integracion de Notion **debe** estar conectada a la base de datos via `...` → Connections. Sin esta conexion, todas las llamadas API retornan "access denied".
+
+---
+
+
+
+## Deploy paso a paso
+
+
+
+### 1. Crear proyecto en Apps Script
+
+1. Abrir [script.google.com](https://script.google.com)
+2. Hacer clic en "Nuevo proyecto"
+3. Renombrar el proyecto (ej: "LinkedIn Job Alerts")
+
+
+
+### 2. Pegar los modulos
+
+Copiar el contenido de los archivos del repositorio `src/` en el editor de Apps Script, respetando la estructura:
+
+
+| Archivo del repositorio | Nombre en Apps Script               |
+| ----------------------- | ----------------------------------- |
+| `src/config.js`         | `config.gs` (o crear nuevo archivo) |
+| `src/services.js`       | `services.gs`                       |
+| `src/pipeline.js`       | `pipeline.gs`                       |
+| `src/main.js`           | `main.gs`                           |
+
+
+> En Apps Script, todos los archivos comparten el mismo scope global. No es necesario importar modulos.
+
+
+
+### 3. Configurar Script Properties
+
+1. En el editor de Apps Script: `Archivo → Propiedades del proyecto → Propiedades del script`
+2. Agregar las 6 propiedades listadas en la seccion "Variables de entorno"
+3. **Nunca** pegar credenciales directamente en el codigo fuente
+
+
+
+### 4. Crear trigger diario
+
+1. En el editor: `Triggers` (icono de reloj en el panel izquierdo)
+2. Hacer clic en "+ Agregar trigger"
+3. Configurar:
+  - Funcion a ejecutar: `main`
+  - Tipo de evento: "Basado en tiempo"
+  - Tipo de trigger: "Al dia" (diario)
+  - Hora del dia: ~8:00 AM
+4. Guardar
+
+
+
+### 5. Verificar parity gate
+
+1. Forzar una ejecucion manual desde el editor (boton "Ejecutar")
+2. En dias impares del año, el log debe mostrar: `Odd day — exiting early (zero API calls)`
+3. En dias pares, el pipeline debe ejecutar el flujo completo
+
+
+
+### 6. Verificar integraciones
+
+1. Ejecutar `main()` en un dia par
+2. Verificar en los logs de Apps Script que los 6 pasos se ejecutan secuencialmente
+3. Confirmar que al menos una pagina se crea en Notion
+4. Confirmar que se recibe un mensaje en Telegram
+
+---
+
+
+
+## Cuotas free tier
+
+
+| Recurso                     | Limite gratuito     | Uso estimado                             | Headroom   |
+| --------------------------- | ------------------- | ---------------------------------------- | ---------- |
+| UrlFetchApp (Apps Script)   | 20,000 llamadas/dia | ~25 llamadas por ejecucion               | Masivo     |
+| Apps Script trigger runtime | ~90 min/dia total   | ~2 min por ejecucion                     | Masivo     |
+| JSearch via RapidAPI        | ~200 requests/mes   | ~45-60/mes (15 ejecuciones x 3 keywords) | ~3x        |
+| Gemini (flash)              | Tier gratuito       | ~1 lote de 15 ofertas por ejecucion      | Suficiente |
+| Notion API                  | Tier gratuito       | 1 query + N writes por ejecucion         | Suficiente |
+| Telegram Bot API            | Sin limite conocido | 1-2 mensajes por ejecucion               | Suficiente |
+
+
+> **Atencion:** La cuota de RapidAPI es el recurso mas limitado. Con 3 keywords y un trigger diario (ejecutando cada dia intermedio por parity gate), se usan ~45-60 requests/mes de un total de ~200. Monitorear el dashboard de RapidAPI mensualmente.
+
+---
+
+
+
+## Roadmap e historial
+
+El archivo `[ROADMAP.md](ROADMAP.md)` documenta las fases de construccion, decisiones de arquitectura, contratos de datos y el historial completo del proyecto. Es la referencia para entender el contexto de diseno y las decisiones tomadas.
+
+---
+
+
+
+## Autor
+
+Desarrollado por **Eric Reyes**.
