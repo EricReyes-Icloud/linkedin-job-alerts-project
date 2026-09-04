@@ -34,7 +34,8 @@ El pipeline opera cada dia intermedio (parity gate) para optimizar las cuotas gr
 
 ## Arquitectura
 
-El diagrama interactivo completo (con navegacion, temas oscuro/claro y exportacion a PNG/SVG) esta disponible en [docs/diagrams/architecture.html](docs/diagrams/architecture.html).
+El diagrama interactivo completo (con navegacion, temas oscuro/claro y exportacion a PNG/SVG) esta disponible en <a href="https://htmlpreview.github.io/?https://github.com/EricReyes-Icloud/linkedin-job-alerts-project/blob/main/docs/diagrams/architecture.html" target="_blank" rel="noopener noreferrer">Diagrama de Arquitectura</a>
+.
 
 ### Diagrama del pipeline
 
