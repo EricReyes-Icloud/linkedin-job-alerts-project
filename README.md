@@ -2,7 +2,7 @@
 
 <img src="Miniatura LinkedIn Project.png" />
 
-# LinkedIn Job Alerts
+# Job Alerts
 
 <p>
 Pipeline automatizado de busqueda y evaluacion de ofertas de empleo que ejecuta busquedas en tableros agregados (LinkedIn, Indeed, Glassdoor, ZipRecruiter), las evalua con un modelo de IA, filtra las mejores y notifica por Telegram. Totalmente gratuito, ejecutado en Google Apps Script con un trigger diario.
