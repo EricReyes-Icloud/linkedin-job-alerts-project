@@ -1,6 +1,15 @@
-# LinkedIn Job Alerts
+<div align="center">
 
+<img src="Miniatura LinkedIn Project.png" />
+
+# Job Alerts
+
+<p>
 Pipeline automatizado de busqueda y evaluacion de ofertas de empleo que ejecuta busquedas en tableros agregados (LinkedIn, Indeed, Glassdoor, ZipRecruiter), las evalua con un modelo de IA, filtra las mejores y notifica por Telegram. Totalmente gratuito, ejecutado en Google Apps Script con un trigger diario.
+</p>
+
+</div>
+
 
 ---
 
@@ -34,7 +43,8 @@ El pipeline opera cada dia intermedio (parity gate) para optimizar las cuotas gr
 
 ## Arquitectura
 
-El diagrama interactivo completo (con navegacion, temas oscuro/claro y exportacion a PNG/SVG) esta disponible en `[docs/diagrams/architecture.html](docs/diagrams/architecture.html)`.
+El diagrama interactivo completo (con navegacion, temas oscuro/claro y exportacion a PNG/SVG) esta disponible en <a href="https://htmlpreview.github.io/?https://github.com/EricReyes-Icloud/linkedin-job-alerts-project/blob/main/docs/diagrams/architecture.html" target="_blank" rel="noopener noreferrer">Diagrama de Arquitectura</a>
+.
 
 ### Diagrama del pipeline
 
@@ -45,15 +55,15 @@ El diagrama interactivo completo (con navegacion, temas oscuro/claro y exportaci
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  PASO 1: PARITY GATE                                               │
+│  PASO 1: PARITY GATE                                                │
 │  Calcula dia del anio % 2                                           │
 │  ├─ Impar → EXIT inmediato (0 llamadas a API)                       │
-│  └─ Par  → Continua                                                │
+│  └─ Par  → Continua                                                 │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  PASO 2: FETCH JOBS (JSearch via RapidAPI)                         │
+│  PASO 2: FETCH JOBS (JSearch via RapidAPI)                          │
 │  Itera 3 keywords:                                                  │
 │  ├─ 'javascript developer junior'                                   │
 │  ├─ 'react developer junior'                                        │
@@ -64,7 +74,7 @@ El diagrama interactivo completo (con navegacion, temas oscuro/claro y exportaci
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  PASO 3: NORMALIZE + DEDUP                                         │
+│  PASO 3: NORMALIZE + DEDUP                                          │
 │  ├─ Dedup dentro del batch (URLs normalizadas)                      │
 │  └─ Dedup contra historial de Notion (URLs existentes)              │
 │  Falla de Notion no fatal → procede con dedup del batch             │
@@ -72,20 +82,20 @@ El diagrama interactivo completo (con navegacion, temas oscuro/claro y exportaci
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  PASO 3.5: PRE-FILTER                                              │
+│  PASO 3.5: PRE-FILTER                                               │
 │  ├─ Excluir por seniority: senior, lead, manager, staff, principal, │
 │  │  director, vp, head of, java (sin script)                        │
 │  └─ Requerir >=1 tech keyword: javascript, typescript, react, node, │
-│     express, firebase en titulo + descripcion                        │
+│     express, firebase en titulo + descripcion                       │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  PASO 4: SCORE CON GEMINI (batch de 15)                            │
+│  PASO 4: SCORE CON GEMINI (batch de 15)                             │
 │  ├─ Lote: hasta 15 ofertas por llamada                              │
 │  ├─ Fallback: score individual si falla el lote                     │
-│  └─ Retry: hasta 3 intentos con backoff (2s, 4s, 6s)               │
-│  Score: 0-100, entero, respuesta JSON forzada                      │
+│  └─ Retry: hasta 3 intentos con backoff (2s, 4s, 6s)                │
+│  Score: 0-100, entero, respuesta JSON forzada                       │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
                            ▼
@@ -97,10 +107,10 @@ El diagrama interactivo completo (con navegacion, temas oscuro/claro y exportaci
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  PASO 6: STORE + NOTIFY                                            │
+│  PASO 6: STORE + NOTIFY                                             │
 │  Para cada match:                                                   │
 │  ├─ Crear pagina en Notion (con todas las propiedades)              │
-│  └─ Enviar mensaje Telegram con titulo, empresa, link y score      │
+│  └─ Enviar mensaje Telegram con titulo, empresa, link y score       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
