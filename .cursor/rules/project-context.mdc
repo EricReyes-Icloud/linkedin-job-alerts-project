@@ -1,0 +1,59 @@
+---
+description: Project context for LinkedIn Job Alerts v2 — what this repo is, the real architecture, sources of truth, and the constraints to respect while working here.
+globs: "*"
+alwaysApply: true
+---
+
+# Project Context — LinkedIn Job Alerts v2
+
+## What this is
+
+LinkedIn Job Alerts is an automated job search / scoring / notification pipeline (v2). It runs on **Google Apps Script** at **$0 total cost** (all components on free tiers). It searches aggregated job boards via API, scores offers against the owner's profile with Gemini, filters by a score threshold, and notifies via Telegram.
+
+## Real architecture (v2)
+
+```
+Google Apps Script (orchestrator)
+  → JSearch/RapidAPI (job source, aggregates LinkedIn / Indeed / Glassdoor / ZipRecruiter)
+  → Gemini (scoring, 0-100)
+  → Notion (storage, database "Trabajos")
+  → Telegram (notifications)
+```
+
+- Trigger: daily time-driven trigger (~8:00 AM) calling `main()`.
+- **Parity gate**: `isExecutionDay()` computes `day-of-year % 2`; odd days exit immediately with zero API calls. Effective cadence is every other day.
+- Pipeline steps (in `src/pipeline.js`): parity gate → fetch jobs → normalize + dedup → pre-filter → Gemini scoring → filter by threshold → store + notify.
+
+## Sources of truth
+
+| Path | Role |
+|------|------|
+| `src/config.js` | All constants (CONFIG object): keywords, `SCORE_THRESHOLD` (75), `GEMINI_MODEL` (`gemini-3.6-flash`), quota knobs, endpoints |
+| `src/pipeline.js` | Pipeline flow (6 steps + early exits) |
+| `src/services.js` | External integrations (JSearch, Gemini, Notion, Telegram) as thin wrappers |
+| `src/main.js` | Entry point: `main()` → `runPipeline()` |
+
+When facts in docs contradict `src/`, the code is the source of truth.
+
+## What this project is NOT
+
+- **No n8n.** The legacy n8n workflow (`linkedin-job-alerts.json`) was retired in v2. Never suggest returning to n8n, never document n8n as a solution, never reference it as the running system. The file stays in the repo as historical reference only — do not modify or execute it.
+- **No LinkedIn scraping.** JSearch provides structured JSON that aggregates LinkedIn/Indeed/Glassdoor/ZipRecruiter via API. No HTML scraping, no unofficial endpoints, no CSS selectors.
+- **Not self-hosted.** The cloud runtime (Apps Script) is a hard requirement — nothing may depend on the owner's machine being on.
+
+## Philosophy and constraints
+
+- **$0 always.** Every component must operate within free tiers. Respect quota limits: JSearch via RapidAPI ~200 requests/month (~45-60 used per month at current cadence), Gemini free tier (batched scoring), Notion free tier, Telegram free.
+- **Debounce quota spend**: prefer local verification (`node --check`, test-runner with mocks) over running the real pipeline, which burns JSearch/Gemini quota.
+- **Score-only output from Gemini**: forced schema returns only `{"score": N}` (0-100). No justification, no adapted CV.
+
+## Deployment
+
+- Deploy is **MANUAL**: the user pastes the modules from `src/` into Apps Script (`config.gs`, `services.gs`, `pipeline.gs`, `main.gs`), configures Script Properties, and creates the trigger. See the README deploy section.
+- **Do not use clasp** or automate deployment without explicit user approval.
+
+## Documentation
+
+- `README.md` — the public portfolio-facing doc (v2 pipeline as it actually exists).
+- `ROADMAP.md` — build history, architecture decisions, data contracts, gotchas.
+- Both are authored in Spanish; new artifacts default to neutral professional English (see `git-and-delivery.mdc`).

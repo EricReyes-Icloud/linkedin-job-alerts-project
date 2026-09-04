@@ -1,0 +1,52 @@
+---
+description: Coding standards for the Google Apps Script pipeline modules under src/ — runtime constraints, secrets handling, error handling, quota discipline, and local verification.
+globs: "src/**/*.js"
+alwaysApply: true
+---
+
+# Apps Script Pipeline Standards (`src/*.js`)
+
+## Runtime: Google Apps Script (Engine V8)
+
+- Code must be ES5-compatible JavaScript: **no Node-only APIs** (`fs`, `http`, `crypto`, ...), no `require`, no ESM `import`/`export`.
+- Modules share a **flat global scope** per file in Apps Script. `src/*.js` must NOT use imports/exports — modules are pasted as `.gs` files that share globals (`CONFIG`, `Services`, pipeline functions). See the README deploy section.
+- Platform globals used are thin-wrapper agnostic: `UrlFetchApp`, `PropertiesService`, `Logger`, `Utilities`, `Session` are only touched inside `src/services.js`.
+
+## Secrets — never in source code
+
+- API keys/tokens go in Apps Script **Script Properties** (production) or a local `.env` file (gitignored, test only). See the README "Variables de entorno" section.
+- Known properties: `RAPIDAPI_KEY`, `GEMINI_API_KEY`, `NOTION_TOKEN`, `NOTION_DB_ID`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
+- `src/config.js` holds only non-sensitive constants. Never hardcode a key, token, or credential anywhere in `src/`.
+
+## Centralized configuration
+
+- All constants live in `src/config.js` under the `CONFIG` object (`KEYWORDS`, `SCORE_THRESHOLD`, `GEMINI_MODEL`, `GEMINI_MAX_RETRIES`, endpoints, etc.).
+- Do not hardcode values, URLs, or keywords outside `src/config.js`. Fetch existing values from `CONFIG` (e.g. `CONFIG.JSEARCH_ENDPOINT`, `CONFIG.SCORE_THRESHOLD`).
+
+## Error handling — non-fatal by default
+
+- Failures scoped to one keyword, one offer, or one external call must NOT abort the pipeline: log + continue.
+- Existing pattern: `fetchJobsFromJSearch()` catches per-keyword errors and continues; Notion query failure falls back to batch-only dedup; `sendNotifications()` catches per-offer errors; failed Gemini scoring assigns score `0`.
+- Some failures ARE blockers: missing config/secrets (`ERROR_MESSAGES.MISSING_CONFIG`), or a pre-filter config that breaks invariants — fail fast there.
+
+## Free-tier quota discipline
+
+- **Batching**: Gemini scoring batches up to `BATCH_SIZE = 15` offers per call (`scoreWithGemini` in `src/pipeline.js`), with per-job fallback if a batch fails.
+- **Retries with backoff**: `GEMINI_MAX_RETRIES = 3`, base delay `GEMINI_RETRY_DELAY_MS = 2000` → 2s/4s/6s. Honor `fetchWithRetry`'s sentinel: explicit `maxRetries = 0` means zero internal retries (the caller owns retrying).
+- No infinite loops, no unlimited retries, no aggressive polling. JSearch quota (~200 req/month) is the scarcest resource — design queries to use ~3 RapidAPI calls per execution.
+
+## Tolerant parsing of AI responses
+
+- Gemini returns JSON inside the envelope `candidates[0].content.parts[0].text` — use `extractGeminiText` (in `src/services.js`) rather than parsing the raw body directly.
+- Strip stray markdown fences before `JSON.parse` (`parseJSONWithFenceStrip`).
+- Accept numeric strings for scores (`toScoreNumber`) and clamp to 0-100; unparseable values degrade to score `0`, never crash the run.
+
+## Variable scope patterns
+
+- Follow the existing conventions: IIFE wrappers that expose a public object (`var Services = (function () { ... })()` in `src/services.js`), `var` declarations and plain `function` declarations (Apps Script style). No `let`/`const` at module level in new code unless the target runtime is confirmed to support it (V8 engine does, but the established pattern is `var`).
+
+## Verification — cheap first, real last
+
+- **`node --check <file>`** — free syntax validation, zero API cost. Run it on any touched `src/*.js` file before finishing.
+- **`node test-runner.js`** — runs the pipeline locally in Node (simulates Apps Script globals, loads `.env`). NOTE: it makes **real API calls** and consumes JSearch/Gemini quota — treat it like a production run, not a sandbox. For zero-cost local testing, replace the `Services` object with a mock (per the pattern documented in `src/services.js`).
+- **Do not run the real pipeline by default** — every execution spends quota. Prefer `node --check` + mocked local tests, and leave end-to-end runs to explicit user request or parity-gate days.
