@@ -1,0 +1,37 @@
+---
+description: Git and delivery conventions for this repo — commit style, secrets hygiene, PR workflow, and manual Apps Script deployment.
+globs: "*"
+alwaysApply: true
+---
+
+# Git and Delivery Conventions
+
+## Commits
+
+- Use **Conventional Commits** with concise messages in English: `feat(scope): ...`, `fix(scope): ...`, `docs(scope): ...`, `refactor(scope): ...`, `chore(scope): ...`. Scope is optional.
+- **Never** add `Co-Authored-By` or any AI attribution to commits or PR descriptions.
+
+## Secrets hygiene
+
+- **Never** stage or commit `.env`, API keys, tokens, or credentials. `.env` is gitignored — keep it that way.
+- Check `git status` and `git diff` **before** staging anything; stage only intended files.
+
+## Local artifacts
+
+- Do **not** commit `.atl/` (local skill-registry artifacts) unless the change's purpose is those files themselves. It is gitignored context; leave it out of commits.
+
+## Pull requests
+
+- Draft PR content with the project skill `skills/pr-creator/SKILL.md` (four-section format: Description, Changes Made, Impact, Notes), written in **English**. Do not translate code identifiers.
+- Save the PR content to `openspec/PR-{next-number}-{slug}.md` (number = next sequential after existing `openspec/PR-*` files).
+- The **user pushes and creates the PR on GitHub themselves**. Do not push, open, or merge PRs without an explicit request. (The pr-creator skill produces content only — it is not an execution action.)
+
+## Production delivery
+
+- Deploy is **manual**: paste modules into Apps Script, set Script Properties, create the daily trigger — per the README deploy section.
+- **Do not automate deployment (clasp) or any other push to production without explicit user approval.**
+
+## Documentation language
+
+- New documentation artifacts (README sections, specs, PRs, commit messages) are written in **neutral professional English**.
+- Reply to the user in the language they write in — documentation language and conversation language are separate contracts.
