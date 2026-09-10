@@ -183,10 +183,11 @@ function sendNoMatchSummary(scoredJobs) {
   var lines = scoredJobs.map(function(job) {
     var title = job.job_title || job.title || 'Unknown';
     var score = (typeof job.score === 'number') ? job.score : 0;
-    return '• ' + title + ' — ' + score + '/100';
+    var link = job.job_apply_link || '';
+    return '• ' + title + ' — ' + score + '/100\n  ' + link;
   });
   var msg = '🔍 Sin matches hoy (' + scoredJobs.length + ' ofertas scoreadas, ninguna supero el umbral ≥ ' +
-    CONFIG.SCORE_THRESHOLD + '):\n\n' + lines.join('\n');
+    CONFIG.SCORE_THRESHOLD + '):\n\n' + lines.join('\n\n');
   try {
     Services.telegramSendMessage(
       Services.getProperty('TELEGRAM_CHAT_ID'),
